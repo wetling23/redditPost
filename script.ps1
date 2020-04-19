@@ -12,6 +12,8 @@ Write-Host $message
 #region setup
 # Initialize variables.
 $timer = [system.diagnostics.stopwatch]::startNew()
+$stopWatch = New-Object -TypeName System.Diagnostics.Stopwatch
+$timeSpan = New-TimeSpan -Minutes 1 -Seconds 30
 $progressCounter = 0
 $reportedDevices = @()
 
@@ -115,7 +117,7 @@ $siteList = $allRmmSites | Join-Object -RightObject $allAntiVirusCustomers -Join
 
 $Exclusion | ForEach-Object {
     $exclusionList += [PSCustomObject]@{
-        customer = $_
+        customer       = $_
         normalizedName = ($_ -replace "\/|\.|&|\s|\(|\)|-|,|'|`"|_", '')
     }
 }
@@ -124,88 +126,96 @@ $reportedDevices += Foreach ($site in $siteList) {
     $customerRmmDevices = $null
     $customerAntiVirusDevices = $null
     $progressCounter++
+    $continue = $false
 
     $message = ("{0}: ===============================================" -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"))
     Write-Host $message
 
-    # Ignore deleted devices.
-    If (($site.normalizedName -eq "DeletedDevices") -or ($site.normalizedName -in $exclusionList.normalizedName)) {
-        $message = ("{0}: Skipping {1}." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $site.normalizedName)
-        Write-Host $message
-
-        Continue
-    }
-    Else {
-        $message = ("{0}: Working on {1}. This is customer {2} of {3}." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $site.normalizedName, $progressCounter, $siteList.Count)
-        Write-Host $message
-    }
-
-    Try {
-        If ($site.uid) {
-            $message = ("{0}: Attempting to get RMM devices for {1} (uid: {2})." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), ($site.name[0]).Trim(), $site.uid)
+    $stopWatch.Start()
+    Do {
+        # Ignore deleted devices.
+        If (($site.normalizedName -eq "DeletedDevices") -or ($site.normalizedName -in $exclusionList.normalizedName)) {
+            $message = ("{0}: Skipping {1}." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $site.normalizedName)
             Write-Host $message
 
-            $customerRmmDevices = Get-RmmDevice -RmmAccessToken (New-RmmApiAccessToken -ApiKey $RmmPublicKey -ApiSecretKey $RmmPrivateKey @commandParams) -SiteUID $site.uid @commandParams
+            Continue
         }
         Else {
-            $message = ("{0}: No RMM site found, equal to {1}." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), ($site.name[1]).Trim())
+            $message = ("{0}: Working on {1}. This is customer {2} of {3}." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $site.normalizedName, $progressCounter, $siteList.Count)
             Write-Host $message
         }
 
-        If ($site.id[1]) {
-            $message = ("{0}: Attempting to get AntiVirus devices for {1} (id: {2})." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), ($site.name[1]).Trim(), ($site.id[1]).Trim())
-            Write-Host $message
+        Try {
+            If ($site.uid) {
+                $message = ("{0}: Attempting to get RMM devices for {1} (uid: {2})." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), ($site.name[0]).Trim(), $site.uid)
+                Write-Host $message
 
-            $customerAntiVirusDevices = (Get-AntiVirusComputer -AccessToken $AntiVirusAccessToken -SecretKey $AntiVirusSecretKey -CustomerId ($site.id[1]).Trim() @commandParams).computers
-        }
-        Else {
-            $message = ("{0}: No AntiVirus customer found matching {1}." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $site.normalizedName)
-            Write-Host $message
-        }
-
-        If ($customerRmmDevices -and $customerAntiVirusDevices) {
-            $message = ("{0}: Found {1} devices in RMM." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $customerRmmDevices.Count)
-            Write-Host $message
-
-            $message = ("{0}: Found {1} devices in AntiVirus. Adding the `"hostname`" properties." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $customerAntiVirusDevices.Count)
-            Write-Host $message
-
-            $customerAntiVirusDevices | ForEach-Object {
-                $_ | Add-Member -MemberType NoteProperty -Name hostname -Value $_.name -Force
+                $customerRmmDevices = Get-RmmDevice -RmmAccessToken (New-RmmApiAccessToken -ApiKey $RmmPublicKey -ApiSecretKey $RmmPrivateKey @commandParams) -SiteUID $site.uid @commandParams
+            }
+            Else {
+                $message = ("{0}: No RMM site found, equal to {1}." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), ($site.name[1]).Trim())
+                Write-Host $message
             }
 
-            $message = ("{0}: Joining RMM and AntiVirus device lists and returning the combined objects." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"))
-            Write-Host $message
+            If ($site.id[1]) {
+                $message = ("{0}: Attempting to get AntiVirus devices for {1} (id: {2})." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), ($site.name[1]).Trim(), ($site.id[1]).Trim())
+                Write-Host $message
 
-            $customerRmmDevices | Join-Object -RightObject $customerAntiVirusDevices -On hostname -JoinType Full
-        }
-        ElseIf ($customerRmmDevices) {
-            $message = ("{0}: Found {1} devices in RMM. No AntiVirus devices." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $customerRmmDevices.Count)
-            Write-Host $message
-
-            $message = ("{0}: Returning RMM device list." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"))
-            Write-Host $message
-
-            $customerRmmDevices
-        }
-        ElseIf ($customerAntiVirusDevices) {
-            $message = ("{0}: Found {1} devices in AntiVirus. Adding the `"hostname`" properties. No RMM devices." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $customerAntiVirusDevices.Count)
-            Write-Host $message
-
-            $customerAntiVirusDevices | ForEach-Object {
-                $_ | Add-Member -MemberType NoteProperty -Name hostname -Value $_.name -Force
+                $customerAntiVirusDevices = (Get-AntiVirusComputer -AccessToken $AntiVirusAccessToken -SecretKey $AntiVirusSecretKey -CustomerId ($site.id[1]).Trim() @commandParams).computers
+            }
+            Else {
+                $message = ("{0}: No AntiVirus customer found matching {1}." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $site.normalizedName)
+                Write-Host $message
             }
 
-            $message = ("{0}: Returning AntiVirus device list." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"))
-            Write-Host $message
+            If ($customerRmmDevices -and $customerAntiVirusDevices) {
+                $continue = $true
+                $message = ("{0}: Found {1} devices in RMM." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $customerRmmDevices.Count)
+                Write-Host $message
 
-            $customerAntiVirusDevices
+                $message = ("{0}: Found {1} devices in AntiVirus. Adding the `"hostname`" properties." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $customerAntiVirusDevices.Count)
+                Write-Host $message
+
+                $customerAntiVirusDevices | ForEach-Object {
+                    $_ | Add-Member -MemberType NoteProperty -Name hostname -Value $_.name -Force
+                }
+
+                $message = ("{0}: Joining RMM and AntiVirus device lists and returning the combined objects." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"))
+                Write-Host $message
+
+                $customerRmmDevices | Join-Object -RightObject $customerAntiVirusDevices -On hostname -JoinType Full
+            }
+            ElseIf ($customerRmmDevices) {
+                $continue = $true
+                $message = ("{0}: Found {1} devices in RMM. No AntiVirus devices." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $customerRmmDevices.Count)
+                Write-Host $message
+
+                $message = ("{0}: Returning RMM device list." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"))
+                Write-Host $message
+
+                $customerRmmDevices
+            }
+            ElseIf ($customerAntiVirusDevices) {
+                $continue = $true
+                $message = ("{0}: Found {1} devices in AntiVirus. Adding the `"hostname`" properties. No RMM devices." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $customerAntiVirusDevices.Count)
+                Write-Host $message
+
+                $customerAntiVirusDevices | ForEach-Object {
+                    $_ | Add-Member -MemberType NoteProperty -Name hostname -Value $_.name -Force
+                }
+
+                $message = ("{0}: Returning AntiVirus device list." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"))
+                Write-Host $message
+
+                $customerAntiVirusDevices
+            }
+        }
+        Catch {
+            $message = ("{0}: Error: {1}" -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $_.Exception.Message)
+            If ($EventLogSource -and (-NOT $LogPath)) { Out-PsLogging -EventLogSource $EventLogSource -MessageType Error -Message $message } ElseIf ($LogPath -and (-NOT $EventLogSource)) { Out-PsLogging -LogPath $LogPath -MessageType Error -Message $message } Else { Out-PsLogging -ScreenOnly -MessageType Error -Message $message }
         }
     }
-    Catch {
-        $message = ("{0}: Error: {1}" -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $_.Exception.Message)
-        If ($EventLogSource -and (-NOT $LogPath)) { Out-PsLogging -EventLogSource $EventLogSource -MessageType Error -Message $message } ElseIf ($LogPath -and (-NOT $EventLogSource)) { Out-PsLogging -LogPath $LogPath -MessageType Error -Message $message } Else { Out-PsLogging -ScreenOnly -MessageType Error -Message $message }
-    }
+    Until (($stopWatch.Elapsed -ge $timeSpan) -or ($continue -eq $true))
 }
 #endregion Main
 
