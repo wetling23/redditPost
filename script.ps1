@@ -169,7 +169,6 @@ $reportedDevices += Foreach ($site in $siteList) {
             }
 
             If ($customerRmmDevices -and $customerAntiVirusDevices) {
-                $continue = $true
                 $message = ("{0}: Found {1} devices in RMM." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $customerRmmDevices.Count)
                 Write-Host $message
 
@@ -186,7 +185,6 @@ $reportedDevices += Foreach ($site in $siteList) {
                 $customerRmmDevices | Join-Object -RightObject $customerAntiVirusDevices -On hostname -JoinType Full
             }
             ElseIf ($customerRmmDevices) {
-                $continue = $true
                 $message = ("{0}: Found {1} devices in RMM. No AntiVirus devices." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $customerRmmDevices.Count)
                 Write-Host $message
 
@@ -196,7 +194,6 @@ $reportedDevices += Foreach ($site in $siteList) {
                 $customerRmmDevices
             }
             ElseIf ($customerAntiVirusDevices) {
-                $continue = $true
                 $message = ("{0}: Found {1} devices in AntiVirus. Adding the `"hostname`" properties. No RMM devices." -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $customerAntiVirusDevices.Count)
                 Write-Host $message
 
@@ -214,8 +211,10 @@ $reportedDevices += Foreach ($site in $siteList) {
             $message = ("{0}: Error: {1}" -f ([datetime]::Now).ToString("yyyy-MM-dd`THH:mm:ss"), $_.Exception.Message)
             If ($EventLogSource -and (-NOT $LogPath)) { Out-PsLogging -EventLogSource $EventLogSource -MessageType Error -Message $message } ElseIf ($LogPath -and (-NOT $EventLogSource)) { Out-PsLogging -LogPath $LogPath -MessageType Error -Message $message } Else { Out-PsLogging -ScreenOnly -MessageType Error -Message $message }
         }
+        $continue = $true
     }
     Until (($stopWatch.Elapsed -ge $timeSpan) -or ($continue -eq $true))
+    $stopWatch.Reset()
 }
 #endregion Main
 
